@@ -12,6 +12,7 @@ dependencies = [
     "transformers>=4.40",
     "sentence-transformers>=3.0",
     "datasets>=2.18",
+    "sentencepiece>=0.2",
     "numpy>=1.26",
     "scipy>=1.12",
     "matplotlib>=3.8",
