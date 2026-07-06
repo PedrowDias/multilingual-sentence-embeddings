@@ -7,11 +7,7 @@ from mse.training.distillation_trainer import DistillationTrainer
 
 
 class MockEncoder(SentenceEncoder):
-    '''A tiny mock encoder for fast, offline testing of the trainer.
-
-    Maps token ids to embeddings via a simple learned linear layer, avoiding
-    any dependency on downloading real pretrained models in tests.
-    '''
+    '''A tiny mock encoder for fast, offline testing of the trainer.'''
 
     def __init__(self, vocab_size: int = 100, embed_dim: int = 8, trainable: bool = True):
         super().__init__()
@@ -26,7 +22,6 @@ class MockEncoder(SentenceEncoder):
         return self._embed_dim
 
     def forward(self, input_ids, attention_mask):
-        # Mean pool over the embedding, ignoring padding
         embedded = self.embedding(input_ids)
         mask = attention_mask.unsqueeze(-1).float()
         summed = (embedded * mask).sum(dim=1)
@@ -64,56 +59,58 @@ def _make_loaders(n_samples=16, seq_len=8, vocab_size=100, batch_size=4):
 
 class TestDistillationTrainer:
 
-    def test_train_loss_recorded(self):
+    def test_train_loss_recorded(self, tmp_path):
         teacher = MockEncoder(trainable=False)
         student = MockEncoder()
         train_loader, val_loader = _make_loaders()
-        config = DistillationConfig(epochs=2, batch_size=4)
+        config = DistillationConfig(epochs=2, batch_size=4, checkpoint_dir=str(tmp_path))
         trainer = DistillationTrainer(student, teacher, train_loader, val_loader, config)
         trainer.train()
         assert len(trainer.train_losses) == 2
 
-    def test_val_loss_recorded(self):
+    def test_val_loss_recorded(self, tmp_path):
         teacher = MockEncoder(trainable=False)
         student = MockEncoder()
         train_loader, val_loader = _make_loaders()
-        config = DistillationConfig(epochs=2, batch_size=4)
+        config = DistillationConfig(epochs=2, batch_size=4, checkpoint_dir=str(tmp_path))
         trainer = DistillationTrainer(student, teacher, train_loader, val_loader, config)
         trainer.train()
         assert len(trainer.val_losses) == 2
 
-    def test_teacher_weights_never_change(self):
+    def test_teacher_weights_never_change(self, tmp_path):
         teacher = MockEncoder(trainable=False)
         student = MockEncoder()
         initial_teacher_weights = teacher.embedding.weight.clone()
 
         train_loader, val_loader = _make_loaders()
-        config = DistillationConfig(epochs=2, batch_size=4)
+        config = DistillationConfig(epochs=2, batch_size=4, checkpoint_dir=str(tmp_path))
         trainer = DistillationTrainer(student, teacher, train_loader, val_loader, config)
         trainer.train()
 
         assert torch.equal(initial_teacher_weights, teacher.embedding.weight)
 
-    def test_student_weights_do_change(self):
+    def test_student_weights_do_change(self, tmp_path):
         teacher = MockEncoder(trainable=False)
         student = MockEncoder()
         initial_student_weights = student.embedding.weight.clone()
 
         train_loader, val_loader = _make_loaders()
-        config = DistillationConfig(epochs=3, batch_size=4, learning_rate=1e-2)
+        config = DistillationConfig(epochs=3, batch_size=4, learning_rate=1e-2, checkpoint_dir=str(tmp_path))
         trainer = DistillationTrainer(student, teacher, train_loader, val_loader, config)
         trainer.train()
 
         assert not torch.equal(initial_student_weights, student.embedding.weight)
 
-    def test_loss_decreases_on_easy_task(self):
+    def test_loss_decreases_on_easy_task(self, tmp_path):
         '''Student should learn to approximate a fixed frozen teacher over time.'''
         torch.manual_seed(0)
         teacher = MockEncoder(embed_dim=8, trainable=False)
         student = MockEncoder(embed_dim=8)
 
         train_loader, val_loader = _make_loaders(n_samples=8, batch_size=8)
-        config = DistillationConfig(epochs=30, batch_size=8, learning_rate=1e-2)
+        config = DistillationConfig(
+            epochs=30, batch_size=8, learning_rate=1e-2, checkpoint_dir=str(tmp_path)
+        )
         trainer = DistillationTrainer(student, teacher, train_loader, val_loader, config)
         trainer.train()
 
