@@ -4,6 +4,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from mse.models.student import StudentEncoder
 from mse.models.teacher import TeacherEncoder
@@ -14,15 +15,6 @@ logger = logging.getLogger(__name__)
 
 class DistillationTrainer:
     '''Trains a multilingual student encoder to match a frozen English teacher.
-
-    The teacher embeds English sentences; the student embeds their translations
-    into other languages. Training minimises the MSE between the two embeddings,
-    so the student learns to place semantically equivalent sentences from any
-    language near the teacher's English embedding for the same meaning.
-
-    Only the student's parameters receive gradient updates — the teacher is
-    frozen (see TeacherEncoder, which sets requires_grad=False on all its
-    parameters at construction).
 
     Args:
         student:      The multilingual encoder being trained.
@@ -46,7 +38,7 @@ class DistillationTrainer:
         self.device = torch.device(config.device)
         self.student = student.to(self.device)
         self.teacher = teacher.to(self.device)
-        self.teacher.eval()  # teacher never trains; keep it in eval mode always
+        self.teacher.eval()
 
         self.train_loader = train_loader
         self.val_loader = val_loader
@@ -72,7 +64,7 @@ class DistillationTrainer:
 
     def train(self) -> None:
         for epoch in range(1, self.config.epochs + 1):
-            train_loss = self._train_epoch()
+            train_loss = self._train_epoch(epoch)
             val_loss = self._validate_epoch()
 
             self.train_losses.append(train_loss)
@@ -88,11 +80,16 @@ class DistillationTrainer:
             if epoch % self.config.save_every_n_epochs == 0:
                 self._save_checkpoint(epoch)
 
-    def _train_epoch(self) -> float:
+    def _train_epoch(self, epoch: int) -> float:
         self.student.train()
         total_loss = 0.0
 
-        for batch in self.train_loader:
+        progress = tqdm(
+            self.train_loader,
+            desc=f'Epoch {epoch}/{self.config.epochs} [train]',
+            leave=False,
+        )
+        for batch in progress:
             batch = {k: v.to(self.device) for k, v in batch.items()}
 
             with torch.no_grad():
@@ -109,6 +106,7 @@ class DistillationTrainer:
             self.optimizer.step()
 
             total_loss += loss.item()
+            progress.set_postfix(loss=f'{loss.item():.5f}')
 
         return total_loss / len(self.train_loader)
 
@@ -117,7 +115,7 @@ class DistillationTrainer:
         total_loss = 0.0
 
         with torch.no_grad():
-            for batch in self.val_loader:
+            for batch in tqdm(self.val_loader, desc='Validating', leave=False):
                 batch = {k: v.to(self.device) for k, v in batch.items()}
                 teacher_emb = self.teacher(
                     batch['teacher_input_ids'], batch['teacher_attention_mask']
